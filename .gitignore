@@ -130,6 +130,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+vidassist-env/
 env/
 venv/
 ENV/
