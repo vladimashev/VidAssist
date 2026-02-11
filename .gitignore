@@ -175,3 +175,6 @@ cython_debug/
 .pypirc
 
 .exe
+
+# VS Code settings
+.vscode/
