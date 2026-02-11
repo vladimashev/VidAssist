@@ -1,6 +1,6 @@
 # VidAssist: LLM-based Goal-Oriented Planning in Instructional Videos
 
-Implementation of the paper:  
+Non-official implementation of the paper:  
 **"Propose, Assess, Search: Harnessing LLMs for Goal-Oriented Planning in Instructional Videos"**  
 [arXiv:2409.20557](https://arxiv.org/abs/2409.20557)
 
@@ -29,3 +29,4 @@ The framework is evaluated on standard datasets like **COIN** and **CrossTask**.
 ---
 
 ## 📂 Project Structure
+
