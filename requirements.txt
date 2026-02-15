@@ -1,5 +1,6 @@
 matplotlib
 transformers
+accelerate
 pandas
 torch
 scikit-learn
