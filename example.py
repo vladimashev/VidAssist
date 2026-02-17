@@ -64,7 +64,9 @@ mdl = mdl.to(device)
 gen = HFLLMGenerate(mdl, tok, GenConfig(max_new_tokens=16, temperature=1.0, top_p=1.0, do_sample=True))
 
 prompts = [
-    "Example:\nTask: Make coffee. Step 1: Take a mug; Step 2: Add coffee; Step 3: Pour hot water; Step 4: Stir the coffee\n\nTask: Make tea. Step 1: Pick up kettle; Step 2: Go to sink; Step 3: Fill kettle; Step 4: Turn on the stove;\nStep 5:"
+    "Example:\nTask: Make coffee. Step 1: Take a mug; Step 2: Add coffee; Step 3: Pour hot water; Step 4: Stir the coffee\n\nTask: Make tea. Step 1: Pick up kettle; Step 2: Go to sink; Step 3: Fill kettle; Step 4: Turn on the stove;\nStep 5:",
+    "Example:\nTask: Make coffee. Step 1: Take a mug; Step 2: Add coffee; Step 3: Pour hot water; Step 4: Stir the coffee\n\nTask: Make tea. Step 1: Pick up kettle; Step 2: Go to sink; Step 3: Fill kettle; Step 4:",
+    "Example:\nTask: Make coffee. Step 1: Take a mug; Step 2: Add coffee; Step 3: Pour hot water; Step 4: Stir the coffee\n\nTask: Make tea. Step 1: Pick up kettle; Step 2: Go to sink; Step 3:"
 ]
 n = 3
 out = gen(prompts, n)
@@ -86,4 +88,4 @@ for i in range(len(prompts)):
             assert abs(d["sum_logprob"] - d["V_G"] * d["n_tokens"]) < 1e-3
 
 print("OK")
-print(out[0][0])
+print(out)

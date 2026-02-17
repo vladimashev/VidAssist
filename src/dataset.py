@@ -1,8 +1,8 @@
-import os
 import json
 import csv
 from pathlib import Path
 from torch.utils.data import Dataset
+from typing import Dict, Any, Tuple, List, Set 
 
 
 class CrossTaskVideoDataset(Dataset):
@@ -13,6 +13,7 @@ class CrossTaskVideoDataset(Dataset):
         videos_csv_path=None,
         tasks_primary_path=None,
         tasks_related_path=None,
+        actions_vocab_path=None,
         remove_o=True
     ):
         """
@@ -42,9 +43,10 @@ class CrossTaskVideoDataset(Dataset):
             videos_csv_path = videos_csv_path or data_root / "videos.csv"
             tasks_primary_path = tasks_primary_path or data_root / "tasks_primary.txt"
             tasks_related_path = tasks_related_path or data_root / "tasks_related.txt"
+            actions_vocab_path = actions_vocab_path or data_root / "vocabs" / "actions.txt"
 
         # Ensure all required paths are defined
-        if not all([json_path, videos_csv_path, tasks_primary_path, tasks_related_path]):
+        if not all([json_path, videos_csv_path, tasks_primary_path, tasks_related_path, actions_vocab_path ]):
             raise ValueError(
                 "You must either provide data_root or explicitly specify all file paths."
             )
@@ -54,6 +56,7 @@ class CrossTaskVideoDataset(Dataset):
         videos_csv_path = Path(videos_csv_path)
         tasks_primary_path = Path(tasks_primary_path)
         tasks_related_path = Path(tasks_related_path)
+        actions_vocab_path = Path(actions_vocab_path)
 
         # Load video_id to task_id mapping
         self.video_to_task = self._load_video_task_mapping(videos_csv_path)
@@ -62,6 +65,8 @@ class CrossTaskVideoDataset(Dataset):
         self.tasks = {}
         self.tasks.update(self._load_tasks_metadata(tasks_primary_path))
         self.tasks.update(self._load_tasks_metadata(tasks_related_path))
+
+        self.admissible_actions, self.admissible_actions_set = self._load_actions_vocab(actions_vocab_path)
 
         # Load frame-level predictions
         with open(json_path, "r", encoding="utf-8") as f:
@@ -80,6 +85,48 @@ class CrossTaskVideoDataset(Dataset):
             self.video_true[vid] = true_collapsed
 
         self.video_ids = list(self.video_preds.keys())
+
+    def get_context(self, key: str) -> Dict[str, Any]:
+        """Fetch context meta by ctx_key (task_id by default)."""
+        return self.tasks[key]
+
+    def _load_actions_vocab(self, path: Path) -> Tuple[List[str], Set[str]]:
+        """
+        Load admissible actions from CrossTask vocab file, e.g.:
+
+          @@UNKNOWN@@
+          stir mixture<|eoa|>
+          <|sact|><|eoa|>
+          <|eact|><|eoa|>
+          whisk mixture<|eoa|>
+          ...
+
+        Rules:
+          - strip whitespace
+          - remove trailing '<|eoa|>'
+          - drop special tokens: '@@UNKNOWN@@', '<|sact|>', '<|eact|>' (and empty)
+          - de-duplicate while preserving order
+        """
+        special = {"@@UNKNOWN@@", "<|sact|>", "<|eact|>", "<|pad|>"}
+        actions: List[str] = []
+        seen: Set[str] = set()
+
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                s = line.strip()
+                if not s:
+                    continue
+
+                # remove eoa marker (if present)
+                s = s.replace("<|eoa|>", "").strip()
+                if not s or s in special:
+                    continue
+
+                if s not in seen:
+                    actions.append(s)
+                    seen.add(s)
+
+        return actions, seen
 
     def _collapse_sequence(self, seq, remove_o=True):
         """

@@ -43,7 +43,7 @@ class HFLLMGenerate:
         )
         enc = {k: v.to(self.model.device) for k, v in enc.items()}
 
-        B = enc["input_ids"].shape[0]
+        B = enc["input_ids"].shape[0] # B = len(prompts), i.e. number of input candidates
         eos_id = self.tokenizer.eos_token_id
 
         out = self.model.generate(
@@ -59,70 +59,69 @@ class HFLLMGenerate:
             output_scores=True,  # for logprobs calculation
         )
 
-        sequences = out.sequences  # [B*n, T_total]
+        sequences = out.sequences  # tensor [B*n, T_total], where T_total = T_old (inc padding) + T_new
+        print(sequences)
         scores = out.scores        # list of length T_new; each is of shape [B*n, vocab]
         T_new = len(scores)
         Bn = B * n
 
-        # длины промптов (без паддинга)
-        prompt_lens = enc["attention_mask"].sum(dim=1)              # [B]
-        prompt_lens_rep = prompt_lens.repeat_interleave(n)          # [B*n]
+        # Prompt lengths
+        T_old = enc["input_ids"].shape[1]                                       # Prompt length with padding
+        prompt_lens_no_pad = enc["attention_mask"].sum(dim=1)                   # [B]
+        prompt_lens__no_pad_rep = prompt_lens_no_pad.repeat_interleave(n)       # [B*n]
 
-        # Считаем logprob выбранного токена на каждом шаге генерации
-        # new_token_logprobs: [B*n, T_new]
+        # Calculate logprob for each token generated
+        # New token logprobs [B*n, T_new]
         new_token_logprobs = torch.empty((Bn, T_new), device=sequences.device, dtype=torch.float32)
+        row = torch.arange(Bn, device=sequences.device)
 
         for t in range(T_new):
             logits_t = scores[t]  # [B*n, vocab]
-            log_probs_t = torch.log_softmax(logits_t, dim=-1)
+            log_probs_t = torch.log_softmax(logits_t, dim=-1) # Calculate distribution
 
-            
-            row = torch.arange(Bn, device=sequences.device)
-            for t in range(T_new):
-                logits_t = scores[t]  # [B*n, vocab]
-                log_probs_t = torch.log_softmax(logits_t, dim=-1)
-
-                token_ids_t = sequences[row, prompt_lens_rep + t]  # [B*n]
-                new_token_logprobs[:, t] = log_probs_t.gather(1, token_ids_t.unsqueeze(1)).squeeze(1)
+            token_ids_t = sequences[row, T_old + t]  # [B*n] - next tokens generated in each 
+            new_token_logprobs[:, t] = log_probs_t.gather(1, token_ids_t.unsqueeze(1)).squeeze(1)
 
         results: List[List[Dict[str, Any]]] = [[] for _ in range(B)]
 
-        for i in range(B):
-            for j in range(n):
-                idx = i * n + j
-                start = int(prompt_lens_rep[idx].item())
+        gen_ids_all = sequences[:, T_old:T_old + T_new]   # [Bn, T_new]
 
-                # Сгенерированные токены (максимум T_new)
-                gen_ids = sequences[idx, start:start + T_new]  # [T_new]
-                lp = new_token_logprobs[idx]                   # [T_new]
+        # Find cut positions t_end for each sample
+        if eos_id is not None:
+            eos_mask = (gen_ids_all == eos_id)            # [Bn, T_new]
+            has_eos = eos_mask.any(dim=1)                 # [Bn]
+            first_eos = eos_mask.float().argmax(dim=1)    # [Bn] (index of first True if any)
 
-                # Обрезаем по EOS (обычно EOS не включают в nk)
-                t_end = T_new
-                if eos_id is not None:
-                    eos_pos = (gen_ids == eos_id).nonzero(as_tuple=False)
-                    if eos_pos.numel() > 0:
-                        first_eos = int(eos_pos[0].item())
-                        t_end = first_eos if self.exclude_eos else first_eos + 1
+            t_end = torch.where(has_eos, first_eos, torch.full_like(first_eos, T_new))
+            if not self.exclude_eos:
+                t_end = torch.clamp(t_end + 1, max=T_new)
+        else:
+            t_end = torch.full((Bn,), T_new, device=sequences.device, dtype=torch.long)
 
-                gen_ids_trim = gen_ids[:t_end]
-                lp_trim = lp[:t_end]
+        # Keep only tokens before t_end
+        t_idx = torch.arange(T_new, device=sequences.device).unsqueeze(0)  # [1, T_new]
+        keep = t_idx < t_end.unsqueeze(1)                                  # [Bn, T_new]
 
-                n_tokens = int(lp_trim.numel())
-                if n_tokens == 0:
-                    # пустая генерация — можно либо пропустить, либо вернуть очень плохой скор
-                    text = ""
-                    sum_logprob = float("-inf")
-                    v_g = float("-inf")
-                else:
-                    text = self.tokenizer.decode(gen_ids_trim, skip_special_tokens=True).strip()
-                    sum_logprob = float(lp_trim.sum().item())
-                    v_g = sum_logprob / n_tokens
+        n_tokens = keep.sum(dim=1)                                         # [Bn]
+        sum_logprob = (new_token_logprobs * keep).sum(dim=1)               # [Bn]
+        v_g = sum_logprob / n_tokens.clamp(min=1)                          # [Bn]
 
-                results[i].append({
-                    "text": text,
-                    "V_G": v_g,
-                    "sum_logprob": sum_logprob,
-                    "n_tokens": n_tokens,
-                })
+        # set empty generations to -inf
+        empty = (n_tokens == 0)
+        sum_logprob = sum_logprob.masked_fill(empty, float("-inf"))
+        v_g = v_g.masked_fill(empty, float("-inf"))
 
+        # --- pack back to [B][n] and decode text ---
+        results = [[] for _ in range(B)]
+        for idx in range(Bn):
+            cut = int(t_end[idx].item())
+            ids = gen_ids_all[idx, :cut]
+            text = "" if cut == 0 else self.tokenizer.decode(ids, skip_special_tokens=True).strip()
+
+            results[idx // n].append({
+                "text": text,
+                "V_G": float(v_g[idx].item()),
+                "sum_logprob": float(sum_logprob[idx].item()),
+                "n_tokens": int(n_tokens[idx].item()),
+            })
         return results

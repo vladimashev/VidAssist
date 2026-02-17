@@ -14,3 +14,9 @@ print("Task name:", sample["task_name"])
 print("Task description:", sample["task_description"])
 print("Pred sequence:", sample["pred_sequence"])
 print("True sequence:", sample["true_sequence"])
+
+# --- admissible actions ---
+print("\nAdmissible actions count:", len(dataset.admissible_actions))
+print("First 30 admissible actions:")
+for a in dataset.admissible_actions[:30]:
+    print(a)
