@@ -175,6 +175,9 @@ class CrossTaskVideoDataset(Dataset):
             num_steps
             step1,step2,...
         """
+
+        #TODO=add in context exaple loading 
+        
         tasks = {}
 
         with open(path, "r", encoding="utf-8") as f:
@@ -193,7 +196,8 @@ class CrossTaskVideoDataset(Dataset):
             tasks[task_id] = {
                 "name": task_name,
                 "steps": steps,
-                "num_steps": num_steps
+                "num_steps": num_steps,
+                "in_context": None
             }
 
             i += 5
@@ -220,7 +224,6 @@ class CrossTaskVideoDataset(Dataset):
         task_info = self.tasks.get(task_id, {})
 
         return {
-            "video_id": vid,
             "task_id": task_id,
             "task_name": task_info.get("name"),
             "task_description": task_info.get("steps"),

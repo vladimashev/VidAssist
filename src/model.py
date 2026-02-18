@@ -7,7 +7,7 @@ import torch
 
 @dataclass
 class GenConfig:
-    max_new_tokens: int = 64
+    max_new_tokens: int = 10
     temperature: float = 0.7
     top_p: float = 0.95
     do_sample: bool = True
@@ -60,7 +60,6 @@ class HFLLMGenerate:
         )
 
         sequences = out.sequences  # tensor [B*n, T_total], where T_total = T_old (inc padding) + T_new
-        print(sequences)
         scores = out.scores        # list of length T_new; each is of shape [B*n, vocab]
         T_new = len(scores)
         Bn = B * n
@@ -111,7 +110,7 @@ class HFLLMGenerate:
         sum_logprob = sum_logprob.masked_fill(empty, float("-inf"))
         v_g = v_g.masked_fill(empty, float("-inf"))
 
-        # --- pack back to [B][n] and decode text ---
+        # Pack back to [B][n] and decode text ---
         results = [[] for _ in range(B)]
         for idx in range(Bn):
             cut = int(t_end[idx].item())
@@ -119,9 +118,9 @@ class HFLLMGenerate:
             text = "" if cut == 0 else self.tokenizer.decode(ids, skip_special_tokens=True).strip()
 
             results[idx // n].append({
-                "text": text,
+                "new_gen_text": text,
                 "V_G": float(v_g[idx].item()),
-                "sum_logprob": float(sum_logprob[idx].item()),
-                "n_tokens": int(n_tokens[idx].item()),
+                #"sum_logprob": float(sum_logprob[idx].item()),
+                #"n_tokens": int(n_tokens[idx].item()),
             })
         return results

@@ -1,51 +1,40 @@
-cofrom dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Protocol
-import heapq
-
-
-@dataclass
-class Candidate:
-    prompt: str
-    steps: List[str] = field(default_factory=list)
-    score: float = 0.0
-    metrics: Dict[str, float] = field(default_factory=dict)  # details assess
-    meta: Dict[str, Any] = field(default_factory=dict)       # the rest (ids, logits, etc.)
-
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import List, Optional, Dict, Any, Protocol
 
 @dataclass(frozen=True)
 class EpisodeContext:
-    in_context: Optional[str]      # None for zero-shot
+    '''
+    Stores permanent information about current episode:
+    goal, steps_given, in-context examples (for the few-shot strategy only)
+    '''
     goal: str
-    observation: Optional[str] = None
+    steps_given: List[str]
+    in_context: Optional[str] = None
 
 @dataclass
 class Candidate:
+    task_name: str
     steps_pred: List[str] = field(default_factory=list)
     score: float = 0.0
-    metrics: Dict[str, float] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
 
 class PromptBuilder:
-    def __init__(self, step_prefix: str = "Step"):
-        self.step_prefix = step_prefix
-
-    def build(self, ctx: EpisodeContext, steps_so_far: List[str]) -> str:
+    def build(self, tasks: Dict[str, Any], cand: Candidate) -> str:
+        
         parts = []
-        if ctx.in_context:
-            parts.append(ctx.in_context.strip())
-        # “Goal description”
-        parts.append(f"Task: {ctx.goal.strip()}")
-        if ctx.observation:
-            parts.append(ctx.observation.strip())
+        
+        task_cfg = tasks.get(cand.task_name, {})
+        in_ctx_examples = task_cfg.get("in_context")
+        if in_ctx_examples:
+            parts.append(str(in_ctx_examples).strip() + "\n")
 
-        # “Previous plan”
-        # В твоём примере это: Task: ... Step 1: ... Step 2: ... Step k:
-        steps_txt = []
-        for i, s in enumerate(steps_so_far, 1):
-            steps_txt.append(f"{self.step_prefix} {i}: {s.strip()}")
-        steps_txt.append(f"{self.step_prefix} {len(steps_so_far)+1}:")  # запрос на следующий шаг
+        parts.append(f"Task: {cand.task_name.strip()}")
 
+        steps_txt = [f"Step {i}: {s.strip()}" for i, s in enumerate(cand.steps_pred, 1)]
+        steps_txt.append(f"\nStep {len(cand.steps_pred)+1}:")
         parts.append("; ".join(steps_txt))
+
         return "\n".join(parts)
 
 
@@ -70,6 +59,31 @@ class Pruner(Protocol):
 # -----------------------------
 # Default implementations
 # -----------------------------
+
+class Proposer:
+    def __init__(
+        self,
+        llm_generate: Callable[[List[str], int], List[List[Dict[str, Any]]]],
+        builder: PromptBuilder,
+        mapper,  # obj with map_batch method
+    ):
+        self.llm_generate = llm_generate
+        self.builder = builder
+        self.mapper = mapper
+
+    def propose(self, tasks: Dict[str, Any], beam: List[Candidate], n: int) -> List[Candidate]:
+        # Build prompts for each candidate in beam (B prompts)
+        prompts = [self.builder.build(tasks, cand) for cand in beam] 
+
+        # Generate N samples per prompt -> List [B][n], each elem is dict {"new_gen_text", "V_G", ...}
+        llm_out = self.llm_generate(prompts, n)
+
+        # Map + expand -> flat list of children length of lenth B*n
+        children = self.mapper.map_and_expand(beam, llm_out, keep_empty=True)
+
+        return children
+
+
 class TopKPruner:
     def prune(self, candidates: List[Candidate], k: int) -> List[Candidate]:
         return heapq.nlargest(k, candidates, key=lambda c: c.score)

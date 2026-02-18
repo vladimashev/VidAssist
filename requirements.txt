@@ -1,5 +1,6 @@
 matplotlib
 transformers
+sentence-transformers
 accelerate
 pandas
 torch
