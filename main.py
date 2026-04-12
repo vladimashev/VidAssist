@@ -1,5 +1,6 @@
 from src.dataset import CrossTaskVideoDataset
-from src.search import Candidate, Proposer, PromptBuilder
+#TODO PromptBuilder, ActionMapper -> Proposer
+from src.search import Candidate, Proposer, PromptBuilder, Assessor
 from src.model import HFLLMGenerate, GenConfig
 from src.map import ActionMapper
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -15,7 +16,7 @@ cand = Candidate(
 )
 beam = [cand]
 
-model_name = "meta-llama/Llama-2-7b-hf"
+model_name = "meta-llama/Llama-2-13b-chat-hf"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(model_name)
 
@@ -30,3 +31,7 @@ children = proposer.propose(tasks=dataset.tasks, beam=beam, n=5)
 print("children:", len(children))
 for i, c in enumerate(children[:5]):
     print(i, c.steps_pred, c.meta.get("V_G"), c.meta.get("V_M"), c.meta.get("last_raw"))
+
+assessor = Assessor(model=model, tokenizer=tokenizer)
+assessed = assessor.assess(children)
+

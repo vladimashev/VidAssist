@@ -8,4 +8,4 @@
 #SBATCH --time=01:00:00
 #SBATCH --export=ALL
 
-python example.py
+python main.py

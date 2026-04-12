@@ -1,29 +1,19 @@
 from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
 
-try:
-    from sentence_transformers import SentenceTransformer
-except ImportError as e:
-    SentenceTransformer = None
+from sentence_transformers import SentenceTransformer
 
-
-@dataclass
-class Candidate:
-    # добавь сюда свои поля (ctx_key/task_id тоже можно)
-    steps_pred: List[str] = field(default_factory=list)
-    score: float = 0.0
-    meta: Dict[str, Any] = field(default_factory=dict)
+from .search import Candidate
 
 
 class ActionMapper:
     """
     Maps free-form LLM text to the most semantically similar admissible action using SBERT embeddings.
-    V_M = max cosine similarity between Emb(text) and Emb(action).
+    Also calculates V_M = max cosine similarity between Emb(text) and Emb(action).
 
     Usage:
         mapper = SBERTActionMapper(admissible_actions, model_name="all-MiniLM-L6-v2")
@@ -163,6 +153,7 @@ class ActionMapper:
             parent = beam[parent_i]
 
             child = Candidate(
+                task_name=parent.task_name,
                 steps_pred=list(parent.steps_pred) + [act],
                 score=parent.score,
                 meta=dict(parent.meta),

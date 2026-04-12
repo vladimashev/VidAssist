@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
 import torch
+import time
 
 
 @dataclass
@@ -15,12 +16,13 @@ class GenConfig:
 
 class HFLLMGenerate:
     """
-    llm_generate(prompts, n) -> [B][N] dicts:
+    HFLLMGenerate(prompts, n) -> [B][N] dicts:
       {"text": ..., "V_G": ..., "sum_logprob": ..., "n_tokens": ...}
 
-    V_G = mean log prob of generated tokens (excluding prompt tokens and excluding EOS by default).
+    V_G = mean log prob of newly generated tokens (excluding EOS by default).
     """
-    def __init__(self, model, tokenizer, cfg: Optional[GenConfig] = None, exclude_eos: bool = True):
+    def __init__(self, model, tokenizer, cfg: Optional[GenConfig] = None, 
+                    exclude_eos: bool = True, device: Optional[str] = None):
         self.model = model
         self.tokenizer = tokenizer
         self.cfg = cfg or GenConfig()
@@ -29,6 +31,13 @@ class HFLLMGenerate:
         # For LLaMA eos as pad
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = torch.device(device)
+
+        self.model.to(self.device)
+        self.model.eval()
 
     @torch.no_grad()
     def __call__(self, prompts: List[str], n: int) -> List[List[Dict[str, Any]]]:
@@ -46,6 +55,7 @@ class HFLLMGenerate:
         B = enc["input_ids"].shape[0] # B = len(prompts), i.e. number of input candidates
         eos_id = self.tokenizer.eos_token_id
 
+        t0 = time.perf_counter()
         out = self.model.generate(
             **enc,
             do_sample=self.cfg.do_sample,
@@ -58,9 +68,12 @@ class HFLLMGenerate:
             return_dict_in_generate=True,
             output_scores=True,  # for logprobs calculation
         )
+        t1 = time.perf_counter()
+        print(f"generate: {(t1 - t0)*1000:.2f} ms")
+        print("keys: ", out.keys())
 
-        sequences = out.sequences  # tensor [B*n, T_total], where T_total = T_old (inc padding) + T_new
-        scores = out.scores        # list of length T_new; each is of shape [B*n, vocab]
+        sequences = out.sequences  # Tensor [B*n, T_total], where T_total = T_old (inc padding) + T_new
+        scores = out.scores        # List of length T_new; each is of shape [B*n, vocab]
         T_new = len(scores)
         Bn = B * n
 
@@ -105,7 +118,7 @@ class HFLLMGenerate:
         sum_logprob = (new_token_logprobs * keep).sum(dim=1)               # [Bn]
         v_g = sum_logprob / n_tokens.clamp(min=1)                          # [Bn]
 
-        # set empty generations to -inf
+        # Set empty generations to -inf
         empty = (n_tokens == 0)
         sum_logprob = sum_logprob.masked_fill(empty, float("-inf"))
         v_g = v_g.masked_fill(empty, float("-inf"))
@@ -120,6 +133,7 @@ class HFLLMGenerate:
             results[idx // n].append({
                 "new_gen_text": text,
                 "V_G": float(v_g[idx].item()),
+                # No need to store this anymore:
                 #"sum_logprob": float(sum_logprob[idx].item()),
                 #"n_tokens": int(n_tokens[idx].item()),
             })
